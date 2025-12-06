@@ -1,98 +1,128 @@
-import os, glob, json, logging
-from qiskit.providers.aer import QasmSimulator
+"""RZNE (Reliability Zero Noise Extrapolation) main module.
+
+This module provides functions for noise simulation, extrapolation, and
+error mitigation in quantum circuits using RZNE techniques.
+"""
+
+import os
+import glob
+import json
+import logging
+import copy
+import collections
+import pickle
+import warnings
+from datetime import date
+
+import numpy as np
+import scipy
+import qiskit
+import supermarq
+import mthree
+
+from mitiq import cdr, ddd, zne
+from mitiq.zne.scaling import fold_gates_at_random
+from mitiq.zne.inference import LinearFactory
 from qiskit import IBMQ, Aer, execute, QuantumCircuit
 from qiskit.compiler import transpile
 from qiskit.converters import circuit_to_dag
+from qiskit.providers.aer import QasmSimulator
 from qiskit.providers.aer.noise import NoiseModel
 from qiskit.quantum_info.analysis import hellinger_fidelity
-import numpy as np
-from mitiq.zne.scaling import fold_gates_at_random
-from mitiq.zne.inference import LinearFactory
-from mitiq import zne
-import scipy
+
+# MATLAB engine (optional, comment out if not using MATLAB)
+# import matlab.engine
+# import matlab
+# eng = matlab.engine.start_matlab()
+
+warnings.simplefilter("ignore", np.ComplexWarning)
 logging.disable(logging.WARNING)
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "1"
 # Comment this line if using GPU
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
-import copy
-import qiskit
-# from cutqc_runtime.main import CutQC # Use this just to benchmark the runtime
 
-#from cutqc.main import CutQC # Use this for exact computation
-
-import warnings
-warnings.simplefilter("ignore", np.ComplexWarning)
-
-from mitiq import cdr
-
-import matlab.engine
-import matlab
-import collections
-
-import supermarq
-import mthree
-import pickle
-eng = matlab.engine.start_matlab()
-from datetime import date
-today = date.today()
-today = str(today)
-today = "%s-%s-%s"%(today.split('-')[0],today.split('-')[1],today.split('-')[2])
+# Date string for output directories
+today = date.today().strftime("%Y-%m-%d")
 
 
-#IBMQ.delete_account()
-IBMQ.save_account(token = '53aae5c3c7d10160dd2983eb51f674130162adadbf0c8c25d0cb139e31b7d7e98eb6866a8f1811e268dda0151b43fc53799f1deb83fa4f3afcaaee60b0d07be5')
-provider = IBMQ.load_account()
-provider = IBMQ.get_provider(hub='ibm-q-ncsu', group='nc-state', project='quantum-error-mo')
-backend = provider.get_backend('ibmq_guadalupe')
-noise_model = NoiseModel.from_backend(backend, readout_error=False, thermal_relaxation=True, gate_error = True)
-#print(noise_model)
-machine_list=['ibmq_guadalupe']
-# Get coupling map from backend
+# IBMQ account configuration
+# Note: Set IBMQ_TOKEN environment variable for security
+# IBMQ.delete_account()
+if 'IBMQ_TOKEN' in os.environ:
+    IBMQ.save_account(token=os.environ['IBMQ_TOKEN'])
+    provider = IBMQ.load_account()
+    provider = IBMQ.get_provider(hub='ibm-q-ncsu', group='nc-state', project='quantum-error-mo')
+    backend = provider.get_backend('ibmq_guadalupe')
+else:
+    # Fallback: load existing saved account
+    provider = IBMQ.load_account()
+    provider = IBMQ.get_provider(hub='ibm-q-ncsu', group='nc-state', project='quantum-error-mo')
+    backend = provider.get_backend('ibmq_guadalupe')
+# Backend configuration
+noise_model = NoiseModel.from_backend(
+    backend, readout_error=False, thermal_relaxation=True, gate_error=True
+)
+machine_list = ['ibmq_guadalupe']
 coupling_map = backend.configuration().coupling_map
-backend2 = QasmSimulator(noise_model = noise_model)
-# Get basis gates from noise model
+backend2 = QasmSimulator(noise_model=noise_model)
 basis_gates = noise_model.basis_gates
 
-
-num_qubits=16
-
+# Global constants
+num_qubits = 16
 mit = mthree.M3Mitigation(backend2)
 mit.cals_from_system(range(16))
 current_test = "rand3"
 t1_time = 79.29
 
 def get_state_list(nqbs):
+    """Generate list of all possible bitstrings for n qubits.
+    
+    Args:
+        nqbs: Number of qubits
+        
+    Returns:
+        List of binary strings representing all possible states
+    """
     getbin = lambda x: format(x, 'b').zfill(nqbs)
-    ret = []
-    for i in range(0, 2**nqbs):
-        ret.append(getbin(i))
-    return ret
+    return [getbin(i) for i in range(2**nqbs)]
 
-M = 32768
-S = {3: get_state_list(3),
-	 4: ['0000', '0001', '0010', '0011', '0100', '0101', '0110', '0111',
-		 '1000', '1001', '1010', '1011', '1100', '1101', '1110', '1111'],
-	 5: ['00000', '00001', '00010', '00011', '00100', '00101', '00110', '00111',
-		 '01000', '01001', '01010', '01011', '01100', '01101', '01110', '01111',
-		 '10000', '10001', '10010', '10011', '10100', '10101', '10110', '10111',
-		 '11000', '11001', '11010', '11011', '11100', '11101', '11110', '11111'],
-	 6: get_state_list(6),
-	 7: get_state_list(7),
-     8: get_state_list(8),
-     12: get_state_list(12),
-     16: get_state_list(16)}
+# Constants
+M = 32768  # Default number of shots
+S = {
+    3: get_state_list(3),
+    4: ['0000', '0001', '0010', '0011', '0100', '0101', '0110', '0111',
+        '1000', '1001', '1010', '1011', '1100', '1101', '1110', '1111'],
+    5: ['00000', '00001', '00010', '00011', '00100', '00101', '00110', '00111',
+        '01000', '01001', '01010', '01011', '01100', '01101', '01110', '01111',
+        '10000', '10001', '10010', '10011', '10100', '10101', '10110', '10111',
+        '11000', '11001', '11010', '11011', '11100', '11101', '11110', '11111'],
+    6: get_state_list(6),
+    7: get_state_list(7),
+    8: get_state_list(8),
+    12: get_state_list(12),
+    16: get_state_list(16)
+}
 
 C = ['ibmq_guadalupe']
 
 def get_esp(circuit, noise_model, backend):
-    backend_prop=backend.properties()
-    #circuit.measure_all()
-    cx_reliability={}
-    rz_reliability={}
-    sx_reliability={}
-    x_reliability={}
-    readout_reliability={}
-    cx_num={}
+    """Calculate Expected Success Probability (ESP) for a circuit.
+    
+    Args:
+        circuit: QuantumCircuit to analyze
+        noise_model: NoiseModel for the backend
+        backend: Backend configuration
+        
+    Returns:
+        ESP value (float)
+    """
+    backend_prop = backend.properties()
+    cx_reliability = {}
+    rz_reliability = {}
+    sx_reliability = {}
+    x_reliability = {}
+    readout_reliability = {}
+    cx_num = {}
     for ginfo in backend_prop.gates:
         if ginfo.gate=="cx":
             for param in ginfo.parameters:
@@ -120,53 +150,89 @@ def get_esp(circuit, noise_model, backend):
                     break
             x_reliability[(ginfo.qubits[0])] = g_reliab
     for i in range(num_qubits):
-        readout_reliability[(i)]=1.0-backend_prop.readout_error(i)
-    qc = transpile(circuit, basis_gates= noise_model.basis_gates,
-                      coupling_map=backend.configuration().coupling_map,
-                      seed_transpiler =0,
-                      optimization_level=0)
+        readout_reliability[i] = 1.0 - backend_prop.readout_error(i)
+    
+    qc = transpile(
+        circuit,
+        basis_gates=noise_model.basis_gates,
+        coupling_map=backend.configuration().coupling_map,
+        seed_transpiler=0,
+        optimization_level=0
+    )
     dag = circuit_to_dag(qc)
-    esp=1
+    esp = 1
     for node in dag.op_nodes():
         if node.name == "rz":
-            key=node.qargs[0]._index
-            esp=esp*rz_reliability[key]
+            key = node.qargs[0]._index
+            esp *= rz_reliability[key]
         elif node.name == "sx":
-            key=node.qargs[0]._index
-            esp=esp*sx_reliability[key]
+            key = node.qargs[0]._index
+            esp *= sx_reliability[key]
         elif node.name == "x":
-            key=node.qargs[0]._index
-            esp=esp*x_reliability[key]
+            key = node.qargs[0]._index
+            esp *= x_reliability[key]
         elif node.name == "cx":
-            key=(node.qargs[0]._index, node.qargs[1]._index)
-            esp=esp*cx_reliability[key]
+            key = (node.qargs[0]._index, node.qargs[1]._index)
+            esp *= cx_reliability[key]
         elif node.name == "measure":
-            key=node.qargs[0]._index
-            esp=esp*readout_reliability[key]
-    #circuit.remove_final_measurements()
+            key = node.qargs[0]._index
+            esp *= readout_reliability[key]
     return esp
 
-def noise_simulation(circuit, s = 32768, readout_mitigated = False):
+def noise_simulation(circuit, s=32768, readout_mitigated=False):
+    """Simulate a circuit with noise.
+    
+    Args:
+        circuit: QuantumCircuit to simulate
+        s: Number of shots (default: 32768)
+        readout_mitigated: Whether to apply readout error mitigation
+        
+    Returns:
+        Counter of measurement results
+    """
     qnum = circuit.num_qubits
     circuit.remove_final_measurements()
     circuit.measure_all()
     
-    circuit = transpile(circuit, backend = backend, optimization_level = 0, scheduling_method = 'asap')
-    result = execute(circuit, Aer.get_backend('qasm_simulator'),
-                 coupling_map=coupling_map,
-                 basis_gates=basis_gates,
-                 noise_model=noise_model, shots = s, simulator_seed = 10, optimization_level=0).result()
+    circuit = transpile(
+        circuit,
+        backend=backend,
+        optimization_level=0,
+        scheduling_method='asap'
+    )
+    result = execute(
+        circuit,
+        Aer.get_backend('qasm_simulator'),
+        coupling_map=coupling_map,
+        basis_gates=basis_gates,
+        noise_model=noise_model,
+        shots=s,
+        simulator_seed=10,
+        optimization_level=0
+    ).result()
     counts1 = result.get_counts(circuit)
+    
     if readout_mitigated:
-        
         quasis = mit.apply_correction(counts1, range(qnum))
         counts1 = quasis.nearest_probability_distribution()
         print("Mitigated")
+    
     circuit.remove_final_measurements()
     counts1 = renormalize(counts1)
     return collections.Counter(counts1)
 
 def binary(num, pre='0b', length=8, spacer=0):
+    """Convert number to binary string with formatting.
+    
+    Args:
+        num: Number to convert
+        pre: Prefix for binary string
+        length: Minimum length of output
+        spacer: Spacer character
+        
+    Returns:
+        Formatted binary string
+    """
     return '{0}{{:{1}>{2}}}'.format(pre, spacer, length).format(bin(num)[2:])
 
 def noisy_cutqc(circuit, data):
@@ -231,22 +297,41 @@ def noisy_cutqc_improved(circuit, data):
     cutqc.clean_data()
     return collections.Counter(counts)
 
-def ideal_simulation(circuit, shots = 32768):
+def ideal_simulation(circuit, shots=32768):
+    """Simulate a circuit without noise (ideal case).
+    
+    Args:
+        circuit: QuantumCircuit to simulate
+        shots: Number of shots (default: 32768)
+        
+    Returns:
+        Counter of measurement results
+    """
     circuit.remove_final_measurements()
     circuit.measure_all()
-    result = execute(circuit, Aer.get_backend('qasm_simulator'), shots = shots, simulator_seed = 10).result()
+    result = execute(
+        circuit,
+        Aer.get_backend('qasm_simulator'),
+        shots=shots,
+        simulator_seed=10
+    ).result()
     counts1 = result.get_counts(circuit)
     circuit.remove_final_measurements()
     return collections.Counter(counts1)
 
 def renormalize(ip_vector):
-    s = 0
-    for key in ip_vector.keys():
-        s += ip_vector[key]
+    """Renormalize a probability vector to sum to 1.
     
-    for key in ip_vector.keys():
-        ip_vector[key] = (ip_vector[key]/s)
-    
+    Args:
+        ip_vector: Dictionary of probabilities
+        
+    Returns:
+        Renormalized dictionary
+    """
+    total = sum(ip_vector.values())
+    if total > 0:
+        for key in ip_vector.keys():
+            ip_vector[key] = ip_vector[key] / total
     return ip_vector
 
 def extrapolate_each_vec(ip_vector, esp, profiled_ip):
@@ -292,15 +377,27 @@ def exponential(x, k, b):
     return 1-k*np.exp(-x/t1_time)+b
 
 
-def extrap_everything(ip_vector, profile_ip, esp):
+def extrap_everything_esp(ip_vector, profile_ip, esp):
+    """Extrapolate using ESP (Expected Success Probability).
+    
+    Args:
+        ip_vector: Input vector to be mitigated
+        profile_ip: Profiled vector
+        esp: ESP of the circuit
+        
+    Returns:
+        Mitigated statevector as Counter
+    """
     op_dict = {}
     for key in ip_vector.keys():
-        popt_exponential, pcov_exponential = scipy.optimize.curve_fit(exponential, [1, 1-esp], [profile_ip[key], ip_vector[key]], p0=[1,-0.5])
+        popt_exponential, pcov_exponential = scipy.optimize.curve_fit(
+            exponential, [1, 1-esp], [profile_ip[key], ip_vector[key]], p0=[1, -0.5]
+        )
         op_dict[key] = exponential(0, popt_exponential[0], popt_exponential[1])
     op_dict = renormalize(op_dict)
     return collections.Counter(op_dict)
 
-def extrap_everything(ip_vector, profile_ip, t2, t1):
+def extrap_everything_time(ip_vector, profile_ip, t2, t1):
     op_dict = {}
     for key in ip_vector.keys():
         popt_exponential, pcov_exponential = scipy.optimize.curve_fit(exponential, [t2, t1], [profile_ip[key], ip_vector[key]], p0=[-1, 1], maxfev = 10000)
@@ -311,15 +408,30 @@ def extrap_everything(ip_vector, profile_ip, t2, t1):
     return collections.Counter(op_dict)
 
 
-def get_time(circuit, backend, lvl = 0):
-    circuit = transpile(circuit, backend = backend, optimization_level = lvl, scheduling_method = 'asap')
+def get_time(circuit, backend, lvl=0):
+    """Calculate the maximum execution time for a circuit.
+    
+    Args:
+        circuit: QuantumCircuit to analyze
+        backend: Backend configuration
+        lvl: Optimization level (default: 0)
+        
+    Returns:
+        Maximum execution time in microseconds
+    """
+    circuit = transpile(
+        circuit,
+        backend=backend,
+        optimization_level=lvl,
+        scheduling_method='asap'
+    )
     max_time = 0
     us = 1e6
     config = backend.configuration()
-    for i in range(0, 16):
-        t = circuit.qubit_duration(i)*config.dt*us
-        if (t > max_time):
-            max_time = t        
+    for i in range(16):
+        t = circuit.qubit_duration(i) * config.dt * us
+        if t > max_time:
+            max_time = t
     return max_time
 
 def get_profiled_state_decoh(nqbs, tt, backend, true_prof = True):
@@ -780,8 +892,6 @@ def get_expectation_qraft(qc: QuantumCircuit, current_test: str = current_test, 
     
     return renormalize(counts_value)
 
-from mitiq import ddd
-
 rule = ddd.rules.xyxy
 
 def get_DZNE_extrap(circuit, vqe):
@@ -923,7 +1033,16 @@ def get_dd(circuit, vqe):
     return mitigated_result
 
 def get_absolute_error(ideal, actual):
-    return abs((ideal - actual))
+    """Calculate absolute error between ideal and actual values.
+    
+    Args:
+        ideal: Ideal/expected value
+        actual: Actual/measured value
+        
+    Returns:
+        Absolute error
+    """
+    return abs(ideal - actual)
 
 def extrap_everything_decoh_5_N(ip_vector, circuit, N):
     op_dict = {}
@@ -1004,13 +1123,27 @@ def extrap_everything_decoh_3(noise_sim, t_1):
     return collections.Counter(op_dict)
 
 def save_object(obj, filename):
-    with open(filename, 'wb') as outp:  # Overwrites any existing file.
+    """Save an object to a pickle file.
+    
+    Args:
+        obj: Object to save
+        filename: Path to output file
+    """
+    with open(filename, 'wb') as outp:
         pickle.dump(obj, outp, pickle.HIGHEST_PROTOCOL)
 
+
 def load_object(filename):
-    with open(filename, 'rb') as outp:  # Overwrites any existing file.
-        obj = pickle.load(outp)
-    return obj
+    """Load an object from a pickle file.
+    
+    Args:
+        filename: Path to input file
+        
+    Returns:
+        Loaded object
+    """
+    with open(filename, 'rb') as inp:
+        return pickle.load(inp)
 
 '''noise_model = load_object("noisemodel.pkl")
 print(noise_model)'''

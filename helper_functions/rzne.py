@@ -1,25 +1,24 @@
-import numpy as np
-from qiskit import IBMQ
-from qiskit.compiler import transpile
-from qiskit.converters import circuit_to_dag
-from qiskit.providers.aer.noise import NoiseModel
-from qiskit import IBMQ
-from qiskit import Aer, execute
-from qiskit.compiler import transpile
-from qiskit.converters import circuit_to_dag
-from qiskit.providers.aer.noise import NoiseModel
-from qiskit import Aer
-import os, logging
+"""RZNE (Reliability Zero Noise Extrapolation) helper functions.
 
+This module provides functions for noise simulation, extrapolation, and
+error mitigation in quantum circuits.
+"""
+
+import os
+import logging
 import warnings
-warnings.simplefilter("ignore", np.ComplexWarning)
-from qiskit import execute
-from qiskit import IBMQ, Aer
-from qiskit.providers.aer.noise import NoiseModel
-from qiskit.compiler import transpile
 import collections
-import supermarq
+
+import numpy as np
 import scipy
+import supermarq
+
+from qiskit import Aer, execute, IBMQ
+from qiskit.compiler import transpile
+from qiskit.converters import circuit_to_dag
+from qiskit.providers.aer.noise import NoiseModel
+
+warnings.simplefilter("ignore", np.ComplexWarning)
 
 
 # function to get ESP
@@ -188,25 +187,12 @@ def exponential2(x, k, b, m):
 def exponential(x, k, b):
     return 1-k*np.exp(-x/140)+b
 
-# Method for exponential RZNE using esp
-# In    ip_vector: Input vector to be mitigated
-# In    profile_ip: Profiled vector
-# In    esp: ESP of the circuit
-# Out   mitigated statevector
-def extrap_everything(ip_vector, profile_ip, esp):
-    op_dict = {}
-    for key in ip_vector.keys():
-        popt_exponential, pcov_exponential = scipy.optimize.curve_fit(exponential, [1, 1-esp], [profile_ip[key], ip_vector[key]], p0=[1,-0.5])
-        op_dict[key] = exponential(0, popt_exponential[0], popt_exponential[1])
-    op_dict = renormalize(op_dict)
-    return collections.Counter(op_dict)
-
 # Method for exponential tRZNE 
 # In    ip_vector: Input vector to be mitigated
 # In    profile_ip: Profiled vector 
 # In    t1, t2: circuit times of original circuit and the infinite noise case
 # Out   mitigated statevector
-def extrap_everything(ip_vector, profile_ip, t2, t1):
+def extrap_everything_time(ip_vector, profile_ip, t2, t1):
     op_dict = {}
     for key in ip_vector.keys():
         popt_exponential, pcov_exponential = scipy.optimize.curve_fit(exponential, [t2, t1], [profile_ip[key], ip_vector[key]], p0=[-1, 1], maxfev = 10000)

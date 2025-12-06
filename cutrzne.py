@@ -34,11 +34,19 @@ import mthree
 import pickle
 #eng = matlab.engine.start_matlab()
 
-#IBMQ.delete_account()
-IBMQ.save_account(token = '53aae5c3c7d10160dd2983eb51f674130162adadbf0c8c25d0cb139e31b7d7e98eb6866a8f1811e268dda0151b43fc53799f1deb83fa4f3afcaaee60b0d07be5')
-provider = IBMQ.load_account()
-provider = IBMQ.get_provider(hub='ibm-q-ncsu', group='nc-state', project='quantum-error-mo')
-backend = provider.get_backend('ibmq_guadalupe')
+# IBMQ account configuration
+# Note: Set IBMQ_TOKEN environment variable for security
+# IBMQ.delete_account()
+if 'IBMQ_TOKEN' in os.environ:
+    IBMQ.save_account(token=os.environ['IBMQ_TOKEN'])
+    provider = IBMQ.load_account()
+    provider = IBMQ.get_provider(hub='ibm-q-ncsu', group='nc-state', project='quantum-error-mo')
+    backend = provider.get_backend('ibmq_guadalupe')
+else:
+    # Fallback: load existing saved account
+    provider = IBMQ.load_account()
+    provider = IBMQ.get_provider(hub='ibm-q-ncsu', group='nc-state', project='quantum-error-mo')
+    backend = provider.get_backend('ibmq_guadalupe')
 noise_model = NoiseModel.from_backend(backend, readout_error=False, thermal_relaxation=True, gate_error = True)
 #print(noise_model)
 machine_list=['ibmq_guadalupe']
