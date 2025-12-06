@@ -53,5 +53,4 @@ This will run various quantum circuit benchmarks (Hamiltonian Simulation, VQE, Q
 
 ## Notes
 
-- The `cutqc` related code is excluded from cleanup as requested
-- MATLAB integration is optional and can be commented out if not needed
+- Clean up was performed using AI tools (Dec 6 2025). For earlier versions revert to a previous commit
