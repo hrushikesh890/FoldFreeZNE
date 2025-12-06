@@ -1,0 +1,36 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the following paper."
+title: "FoldFreeZNE"
+version: "1.0.0"
+doi: "10.1109/QCE57702.2023.00104"
+date-released: 2025-12-05
+url: "https://github.com/hrushikesh890/FoldFreeZNE"
+
+authors:
+  - family-names: "Patil"
+    given-names: "Hrushikesh Pramod"
+  - family-names: "Li"
+    given-names: "Peiyi"
+  - family-names: "Liu"
+    given-names: "Ji"
+  - family-names: "Zhou"
+    given-names: "Huiyang"
+
+preferred-citation:
+  type: conference-paper
+  title: "Folding-Free ZNE: A Comprehensive Quantum Zero-Noise Extrapolation Approach for Mitigating Depolarizing and Decoherence Noise"
+  authors:
+    - family-names: "Patil"
+      given-names: "Hrushikesh Pramod"
+    - family-names: "Li"
+      given-names: "Peiyi"
+    - family-names: "Liu"
+      given-names: "Ji"
+    - family-names: "Zhou"
+      given-names: "Huiyang"
+  year: 2023
+  doi: "10.1109/QCE57702.2023.00104"
+  conference:
+    name: "2023 IEEE International Conference on Quantum Computing and Engineering (QCE)"
+  pages: "898-909"
+  volume: "01"
